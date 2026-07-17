@@ -10,7 +10,7 @@ export const TrsutData={
     contact:"+91 9892311810/9892769591",
     contactPerson:"",
     trustPresident:"",
-    frameImg:"/Images/Certificate-Img.png",
+    frameImg:certificateImg,
     email:"shubhlaxmict@gmail.com",
     website:"",
     regNo:null,
