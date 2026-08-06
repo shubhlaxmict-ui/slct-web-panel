@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, message } from 'antd';
+import { Button, Drawer, Form, Input, InputNumber, Select, Space, Card, Typography, App, Radio, message, Modal, Table, Tag } from 'antd';
 import { FiPlusCircle, FiTrash2, FiUser, FiMapPin, FiDollarSign, FiCalendar, FiTag, FiEdit2, FiSave } from 'react-icons/fi';
 import { useAuth } from '@/lib/AuthProvider';
-import { collection, addDoc, updateDoc, doc } from "firebase/firestore";
+import { collection, addDoc, updateDoc, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { setgetMemberDataChange, setPrograms } from '@/redux/slices/commonSlice';
 import { useDispatch, useSelector } from 'react-redux';
@@ -11,7 +11,7 @@ const { TextArea } = Input;
 const { Title, Text } = Typography;
 
 const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null,isDrawerOpen,setIsDrawerOpen }) => {
-  const { message: antdMessage } = App.useApp();
+  const { message: antdMessage, modal: antdModal } = App.useApp();
   const [form] = Form.useForm();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -65,24 +65,172 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
     }
   }, [mode, program, isDrawerOpen, form]);
 
+  // Generate an id only when the group doesn't already have one.
+  // (Keeping existing ids is critical: members reference their age group by id.)
+  const generateId = () =>
+    (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+
+  // Compare the age groups being saved against the ones currently stored on the
+  // program and return the ones whose joinFee / payAmount actually changed.
+  const getChangedFeeGroups = (newGroups) => {
+    const oldGroups = program?.ageGroups || [];
+    const changed = [];
+
+    (newGroups || []).forEach(newGroup => {
+      const oldGroup = oldGroups.find(g => g.id === newGroup.id);
+      if (!oldGroup) return; // newly added group -> no existing members yet
+
+      const oldJoinFee = Number(oldGroup.joinFee) || 0;
+      const newJoinFee = Number(newGroup.joinFee) || 0;
+      const oldPayAmount = Number(oldGroup.payAmount) || 0;
+      const newPayAmount = Number(newGroup.payAmount) || 0;
+
+      if (oldJoinFee !== newJoinFee || oldPayAmount !== newPayAmount) {
+        changed.push({
+          id: newGroup.id,
+          range: `${newGroup.startAge}-${newGroup.endAge}`,
+          oldJoinFee,
+          newJoinFee,
+          oldPayAmount,
+          newPayAmount,
+        });
+      }
+    });
+
+    return changed;
+  };
+
+  // Ask the user whether the new fees should also be applied to members that
+  // already exist in the affected age groups.
+  const confirmApplyToExistingMembers = (changedGroups) =>
+    new Promise(resolve => {
+      (antdModal || Modal).confirm({
+        title: 'Update existing members?',
+        width: 620,
+        okText: 'Yes, update existing members',
+        cancelText: 'No, only change the program',
+        content: (
+          <div className="space-y-3">
+            <Text>
+              Joining Fee / Pay Amount changed for the age group(s) below. Do you
+              want to apply these new amounts to all existing members in these
+              age groups?
+            </Text>
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="id"
+              dataSource={changedGroups}
+              columns={[
+                { title: 'Age Group', dataIndex: 'range', key: 'range' },
+                {
+                  title: 'Joining Fee',
+                  key: 'joinFee',
+                  render: (_, r) =>
+                    r.oldJoinFee === r.newJoinFee ? (
+                      <Text type="secondary">₹{r.newJoinFee}</Text>
+                    ) : (
+                      <span>
+                        <Text delete type="secondary">₹{r.oldJoinFee}</Text>{' '}
+                        <Tag color="green">₹{r.newJoinFee}</Tag>
+                      </span>
+                    ),
+                },
+                {
+                  title: 'Pay Amount',
+                  key: 'payAmount',
+                  render: (_, r) =>
+                    r.oldPayAmount === r.newPayAmount ? (
+                      <Text type="secondary">₹{r.newPayAmount}</Text>
+                    ) : (
+                      <span>
+                        <Text delete type="secondary">₹{r.oldPayAmount}</Text>{' '}
+                        <Tag color="green">₹{r.newPayAmount}</Tag>
+                      </span>
+                    ),
+                },
+              ]}
+            />
+            <Text type="warning" className="block">
+              Choosing "No" keeps the old amounts on existing members; only new
+              members will get the updated amounts.
+            </Text>
+          </div>
+        ),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+
+  // Apply the new joinFee / payAmount to every existing member of the changed
+  // age groups. Paid amounts are preserved; the remaining balance is recomputed.
+  const applyFeesToExistingMembers = async (programId, changedGroups) => {
+    const membersRef = collection(db, "users", user.uid, "programs", programId, "members");
+    let updatedCount = 0;
+
+    for (const group of changedGroups) {
+      const snap = await getDocs(query(membersRef, where("ageGroup", "==", group.id)));
+      if (snap.empty) continue;
+
+      // Firestore allows max 500 writes per batch.
+      const docs = snap.docs;
+      for (let i = 0; i < docs.length; i += 450) {
+        const batch = writeBatch(db);
+
+        docs.slice(i, i + 450).forEach(memberDoc => {
+          const member = memberDoc.data();
+          const paidAmount = Number(member.joinFeesPaidAmount) || 0;
+          const remaining = Math.max(0, group.newJoinFee - paidAmount);
+
+          batch.update(memberDoc.ref, {
+            joinFees: group.newJoinFee,
+            payAmount: group.newPayAmount,
+            joinFeesRemainingAmount: remaining,
+            updatedAt: new Date(),
+          });
+        });
+
+        await batch.commit();
+      }
+
+      updatedCount += docs.length;
+    }
+
+    return updatedCount;
+  };
+
   const handleSubmit = async (values) => {
     if (!user?.uid) {
       antdMessage.error("User not authenticated!");
       return;
     }
-    
+
+    // Add unique id to each age group and location group if not exists
+    const ageGroupsWithId = (values.ageGroups || []).map(group => ({
+      ...group,
+      id: group.id || generateId()
+    }));
+
+    const locationGroupsWithId = (values.locationGroups || []).map(group => ({
+      ...group,
+      id: group.id || generateId()
+    }));
+
+    // Ask before touching existing members (edit mode only)
+    let updateExistingMembers = false;
+    let changedFeeGroups = [];
+
+    if (mode === 'edit' && program?.id) {
+      changedFeeGroups = getChangedFeeGroups(ageGroupsWithId);
+      if (changedFeeGroups.length > 0) {
+        updateExistingMembers = await confirmApplyToExistingMembers(changedFeeGroups);
+      }
+    }
+
     setLoading(true);
     try {
-      // Add unique id to each age group and location group if not exists
-      const ageGroupsWithId = (values.ageGroups || []).map(group => ({
-        ...group,
-        id: group.id || (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2)
-      }));
-      
-      const locationGroupsWithId = (values.locationGroups || []).map(group => ({
-        ...group,
-        id: group.id || (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2)
-      }));
 
       // Create category flags based on selected category
       const categoryFlags = {
@@ -135,6 +283,22 @@ const AddProgramEdit = ({ program, mode = 'add', onSuccess, triggerButton = null
         });
         
         antdMessage.success('Program updated successfully!');
+
+        // Push the new joinFee / payAmount down to existing members if confirmed
+        if (updateExistingMembers && changedFeeGroups.length > 0) {
+          try {
+            const updatedCount = await applyFeesToExistingMembers(program.id, changedFeeGroups);
+            antdMessage.success(
+              updatedCount > 0
+                ? `${updatedCount} existing member(s) updated with the new amounts.`
+                : 'No existing members found in the changed age groups.'
+            );
+          } catch (memberError) {
+            console.error('Error updating existing members:', memberError);
+            antdMessage.error('Program saved, but updating existing members failed.');
+          }
+        }
+
           const programs=programList.map((item)=>{
         if(item.id ===program.id){
           return {
