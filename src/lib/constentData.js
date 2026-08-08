@@ -4,7 +4,7 @@ import logo from "@/app/api/helperfile/Images/logo";
 import semkariLogo from "@/app/api/helperfile/Images/semkariLogo";
 
 export const TrsutData={
-    name:"SHREE SHUBH LAXMI CHARITABLE TRUST",
+    name:"SHRI SHUBH LAXMI CHARITABLE TRUST",
     cityState:"",
     address:"Office No. 1203, 12th Floor, Kanak Heights, 6th Khetwadi Lane, Back Road, Girgaon, Mumbai-400004, Maharashtra",
     contact:"+91 9892311810/9892769591",
