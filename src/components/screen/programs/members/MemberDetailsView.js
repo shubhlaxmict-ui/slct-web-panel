@@ -227,6 +227,17 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
     return dayjs().isAfter(closingDate);
   };
 
+  // Remaining days until membership closes (or expiry message)
+  const getMembershipRemainingText = () => {
+    if (!selectedMember?.closingMonths || selectedMember?.closingMonths === 0) return '';
+    const joinDate = selectedMember?.dateJoin ? dayjs(selectedMember.dateJoin, 'DD-MM-YYYY') : dayjs();
+    const closingDate = joinDate.add(selectedMember.closingMonths, 'month');
+    const daysLeft = closingDate.diff(dayjs(), 'day');
+    if (daysLeft < 0) return 'Membership expired';
+    if (daysLeft === 0) return 'Expires today';
+    return `${daysLeft} days remaining`;
+  };
+
   // Get join fees payment status color
   const getJoinFeesStatusColor = () => {
     if (!selectedMember?.joinFeesDone) return 'red';
@@ -378,7 +389,12 @@ function MemberDetailsView({isModalVisible, handleCloseModal, showDeleteConfirm,
                   {selectedMember.closingMonths ? `${selectedMember.closingMonths} months` : 'No closing date'}
                 </Descriptions.Item>
                 <Descriptions.Item label="Membership Closing Date">
-                  {getMembershipClosingDate()}
+                  <div>{getMembershipClosingDate()}</div>
+                  {selectedMember?.closingMonths && selectedMember?.closingMonths > 0 && (
+                    <div className={`text-xs mt-1 ${isMembershipExpired() ? 'text-red-500 font-semibold' : 'text-gray-500'}`}>
+                      {getMembershipRemainingText()}
+                    </div>
+                  )}
                 </Descriptions.Item>
                 <Descriptions.Item label="Membership Status">
                   {isMembershipExpired() ? (

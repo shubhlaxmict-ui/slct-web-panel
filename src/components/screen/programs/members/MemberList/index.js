@@ -72,20 +72,22 @@ const JOIN_FEES_OPTIONS = [
 ];
 
 // ── helpers ────────────────────────────────────────────────────────────────────
-const countActive = ({ gender, agent, dateRange, joinFees }) => {
+const countActive = ({ gender, agent, dateRange, joinFees, ageGroup }) => {
     let n = 0;
     if (gender   !== 'all')  n++;
     if (agent)               n++;
     if (dateRange)           n++;
     if (joinFees !== 'all')  n++;
+    if (ageGroup && ageGroup !== 'all') n++;
     return n;
 };
 
-const buildFilterLabel = ({ statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, agentsList }) => {
+const buildFilterLabel = ({ statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, ageGroupFilter, agentsList }) => {
     const parts = [];
     if (genderFilter !== 'all')   parts.push(genderFilter === 'male' ? 'Male' : 'Female');
     if (selectedAgentFilter)      parts.push(`Agent: ${agentsList?.find(a => a.id === selectedAgentFilter)?.displayName || selectedAgentFilter}`);
     if (joinFeesFilter !== 'all') parts.push(joinFeesFilter === 'pending' ? 'Fees Pending' : 'Fees Paid');
+    if (ageGroupFilter && ageGroupFilter !== 'all') parts.push(`Age Group: ${ageGroupFilter}`);
     if (dateRange)                parts.push(`${dateRange[0]?.format('DD/MM/YY')} – ${dateRange[1]?.format('DD/MM/YY')}`);
     return parts;
 };
@@ -120,6 +122,7 @@ const MemberList = () => {
     const [selectedAgentFilter,  setSelectedAgentFilter]  = useState(null);
     const [dateRange,            setDateRange]            = useState(null);
     const [joinFeesFilter,       setJoinFeesFilter]       = useState('all');
+    const [ageGroupFilter,       setAgeGroupFilter]       = useState('all');
 
     // draft values (inside modal)
     const [draftStatus,          setDraftStatus]          = useState('active');
@@ -127,6 +130,7 @@ const MemberList = () => {
     const [draftAgent,           setDraftAgent]           = useState(null);
     const [draftDateRange,       setDraftDateRange]       = useState(null);
     const [draftJoinFees,        setDraftJoinFees]        = useState('all');
+    const [draftAgeGroup,        setDraftAgeGroup]        = useState('all');
 
     const [JoinFeesMemberListOpen, setJoinFeesMemberListOpen] = useState(false);
     
@@ -147,8 +151,17 @@ const MemberList = () => {
 
     const activeFilterCount = countActive({
         gender: genderFilter, agent: selectedAgentFilter,
-        dateRange, joinFees: joinFeesFilter
+        dateRange, joinFees: joinFeesFilter, ageGroup: ageGroupFilter
     });
+
+    // Age group options built from the selected program's configured age groups
+    const AGE_GROUP_OPTIONS = [
+        { value: 'all', label: 'All age groups' },
+        ...(selectedProgram?.ageGroups || []).map(g => ({
+            value: `${g.startAge}-${g.endAge}`,
+            label: `${g.startAge}-${g.endAge} years`,
+        })),
+    ];
 
     const defaultColDef = { sortable: true, filter: true, resizable: true, flex: 1, minWidth: 100 };
 
@@ -159,6 +172,7 @@ const MemberList = () => {
         setDraftAgent(selectedAgentFilter);
         setDraftDateRange(dateRange);
         setDraftJoinFees(joinFeesFilter);
+        setDraftAgeGroup(ageGroupFilter);
         setIsFilterModalOpen(true);
     };
 
@@ -168,6 +182,7 @@ const MemberList = () => {
         setSelectedAgentFilter(draftAgent);
         setDateRange(draftDateRange);
         setJoinFeesFilter(draftJoinFees);
+        setAgeGroupFilter(draftAgeGroup);
         setIsFilterModalOpen(false);
     };
 
@@ -177,6 +192,7 @@ const MemberList = () => {
         setDraftAgent(null);
         setDraftDateRange(null);
         setDraftJoinFees('all');
+        setDraftAgeGroup('all');
     };
 
     const removeFilter = (key) => {
@@ -184,16 +200,18 @@ const MemberList = () => {
         if (key === 'agent')     setSelectedAgentFilter(null);
         if (key === 'dateRange') setDateRange(null);
         if (key === 'joinFees')  setJoinFeesFilter('all');
+        if (key === 'ageGroup')  setAgeGroupFilter('all');
     };
 
     // ── core filter logic ──────────────────────────────────────────────────────
     const applyFilters = useCallback((data, opts = {}) => {
         if (!data?.length) return data ?? [];
-        const s  = opts.status    ?? statusFilter;
-        const g  = opts.gender    ?? genderFilter;
-        const ag = opts.agent     ?? selectedAgentFilter;
-        const dr = opts.dateRange ?? dateRange;
-        const jf = opts.joinFees  ?? joinFeesFilter;
+        const s     = opts.status    ?? statusFilter;
+        const g     = opts.gender    ?? genderFilter;
+        const ag    = opts.agent     ?? selectedAgentFilter;
+        const dr    = opts.dateRange ?? dateRange;
+        const jf    = opts.joinFees  ?? joinFeesFilter;
+        const agrp  = opts.ageGroup  ?? ageGroupFilter;
 
         let out = [...data];
 
@@ -213,6 +231,15 @@ const MemberList = () => {
         else if (jf === 'paid')
             out = out.filter(m => !!m.joinFeesDone);
 
+        if (agrp && agrp !== 'all')
+            out = out.filter(m => {
+                const range = m.ageGroupRange;
+                if (range) return range === agrp;
+                // Fallback: resolve the age-group id stored on the member
+                const group = (selectedProgram?.ageGroups || []).find(g => g.id === m.ageGroup);
+                return group ? `${group.startAge}-${group.endAge}` === agrp : false;
+            });
+
         if (dr?.[0] && dr?.[1]) {
             const start = dr[0].startOf('day');
             const end   = dr[1].endOf('day');
@@ -224,7 +251,7 @@ const MemberList = () => {
         }
 
         return out;
-    }, [statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter]);
+    }, [statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, ageGroupFilter, selectedProgram]);
 
     // ── fetch ──────────────────────────────────────────────────────────────────
     const onGridReady = useCallback(async () => {
@@ -249,7 +276,7 @@ const MemberList = () => {
 
     useEffect(() => {
         if (allMembersData.length) setFilteredMembersData(applyFilters(allMembersData));
-    }, [statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, allMembersData, applyFilters]);
+    }, [statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, ageGroupFilter, allMembersData, applyFilters]);
 
     useEffect(() => { onGridReady(); }, [selectedProgram, memberStatusChange]);
 
@@ -280,17 +307,17 @@ const MemberList = () => {
     // ── draft preview count ────────────────────────────────────────────────────
     const previewCount = applyFilters(allMembersData, {
         status: draftStatus, gender: draftGender, agent: draftAgent,
-        dateRange: draftDateRange, joinFees: draftJoinFees
+        dateRange: draftDateRange, joinFees: draftJoinFees, ageGroup: draftAgeGroup
     }).length;
 
     const draftActiveCount = countActive({
         gender: draftGender, agent: draftAgent,
-        dateRange: draftDateRange, joinFees: draftJoinFees
+        dateRange: draftDateRange, joinFees: draftJoinFees, ageGroup: draftAgeGroup
     });
 
     // ── build active chip labels for toolbar ───────────────────────────────────
     const activeChips = buildFilterLabel({
-        statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, agentsList
+        statusFilter, genderFilter, selectedAgentFilter, dateRange, joinFeesFilter, ageGroupFilter, agentsList
     });
 
     // ── current filter summary string (for PDF header) ─────────────────────────
@@ -299,6 +326,7 @@ const MemberList = () => {
         if (genderFilter !== 'all')   parts.push(`Gender: ${genderFilter}`);
         if (selectedAgentFilter)      parts.push(`Agent: ${agentsList?.find(a => a.id === selectedAgentFilter)?.displayName || ''}`);
         if (joinFeesFilter !== 'all') parts.push(`Join Fees: ${joinFeesFilter === 'pending' ? 'Pending' : 'Paid'}`);
+        if (ageGroupFilter && ageGroupFilter !== 'all') parts.push(`Age Group: ${ageGroupFilter}`);
         if (dateRange)                parts.push(`Date: ${dateRange[0]?.format('DD/MM/YYYY')} – ${dateRange[1]?.format('DD/MM/YYYY')}`);
         return parts.join(' · ');
     })();
@@ -363,6 +391,24 @@ const MemberList = () => {
             )
         },
         { field: 'ageGroupRange', headerName: 'Age Group', width: 130, cellDataType: 'text' },
+        {
+            field: 'closingMonths', headerName: 'Closing (Months)', width: 150, filter: false,
+            cellRenderer: ({ data }) => {
+                const months = data.closingMonths;
+                if (!months || months === 0) return <span className="text-gray-400">—</span>;
+                const joinDate = data.dateJoin ? dayjs(data.dateJoin, ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', undefined]) : dayjs();
+                const closingDate = joinDate.add(months, 'month');
+                const expired = dayjs().isAfter(closingDate);
+                return (
+                    <div>
+                        <div className="font-medium">{months} months</div>
+                        <div className={`text-xs ${expired ? 'text-red-500 font-semibold' : 'text-gray-400'}`}>
+                            {closingDate.format('DD/MM/YYYY')}{expired ? ' · Expired' : ''}
+                        </div>
+                    </div>
+                );
+            }
+        },
         {
             field: 'createdAt', headerName: 'Join Date', width: 130,
             cellRenderer: ({ data }) => data.dateJoin || '—'
@@ -599,6 +645,12 @@ const MemberList = () => {
                             {joinFeesFilter === 'pending' ? 'Fees Pending' : 'Fees Paid'}
                         </Tag>
                     )}
+                    {ageGroupFilter && ageGroupFilter !== 'all' && (
+                        <Tag closable onClose={() => removeFilter('ageGroup')} color="geekblue"
+                            className="h-7 flex items-center text-xs">
+                            Age Group: {ageGroupFilter}
+                        </Tag>
+                    )}
                     {dateRange && (
                         <Tag closable onClose={() => removeFilter('dateRange')} color="orange"
                             className="h-7 flex items-center text-xs">
@@ -607,7 +659,7 @@ const MemberList = () => {
                     )}
                     {activeFilterCount > 0 && (
                         <Button size="small" type="link" icon={<ClearOutlined />}
-                            onClick={() => { setGenderFilter('all'); setSelectedAgentFilter(null); setDateRange(null); setJoinFeesFilter('all'); }}
+                            onClick={() => { setGenderFilter('all'); setSelectedAgentFilter(null); setDateRange(null); setJoinFeesFilter('all'); setAgeGroupFilter('all'); }}
                             className="text-gray-400 hover:text-red-500 px-1 text-xs">
                             Clear all
                         </Button>
@@ -809,6 +861,20 @@ const MemberList = () => {
                         />
                     </div>
 
+                    {/* Age Group */}
+                    <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                            Age Group
+                        </label>
+                        <Select
+                            value={draftAgeGroup}
+                            onChange={setDraftAgeGroup}
+                            className="w-full"
+                            size="middle"
+                            options={AGE_GROUP_OPTIONS}
+                        />
+                    </div>
+
                     {/* Date Range */}
                     <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
@@ -854,6 +920,7 @@ const MemberList = () => {
                             {draftGender !== 'all'    && <Tag color={draftGender==='male'?'blue':'pink'} className="text-xs capitalize">{draftGender}</Tag>}
                             {draftAgent               && <Tag color="purple" className="text-xs">Agent: {agentsList?.find(a=>a.id===draftAgent)?.displayName||draftAgent}</Tag>}
                             {draftJoinFees!=='all'     && <Tag color={draftJoinFees==='pending'?'red':'green'} className="text-xs">{draftJoinFees==='pending'?'Fees Pending':'Fees Paid'}</Tag>}
+                            {draftAgeGroup && draftAgeGroup !== 'all' && <Tag color="geekblue" className="text-xs">Age Group: {draftAgeGroup}</Tag>}
                             {draftDateRange           && <Tag color="orange" className="text-xs">{draftDateRange[0]?.format('DD/MM/YY')} – {draftDateRange[1]?.format('DD/MM/YY')}</Tag>}
                             {draftActiveCount === 0 && draftStatus === 'active' && (
                                 <span className="text-xs text-gray-400 italic">No additional filters</span>
