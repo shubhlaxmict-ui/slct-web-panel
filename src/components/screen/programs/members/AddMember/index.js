@@ -95,7 +95,7 @@ const [closingDays, setClosingDays] = useState(null);
       setDocumentBack([]);
       setGuardianDocument([]);
       setExtraFields([]);
-      setDistricts([]);
+      setDistricts(districtsByState['rajasthan'] || []);
       setIsJoinFeesDone(false);
       setIsCopyFromExisting(false);
       setExistingMemberPhone('');
@@ -105,9 +105,10 @@ const [closingDays, setClosingDays] = useState(null);
       setStoredJoinDate(dayjs());
       setJoinFeesPaymentType(null);
       setCustomJoinFeesAmount(1100);
-      // Set default join date to today
+      // Set default join date to today and default state to Rajasthan
       form.setFieldsValue({
-        dateJoin: dayjs()
+        dateJoin: dayjs(),
+        state: 'rajasthan',
       });
     }
   }, [open, form]);
@@ -743,6 +744,7 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
             initialValues={{
               addedBy: 'admin',
               dateJoin: dayjs(),
+              state: 'rajasthan',
               customJoinFeesAmount: 1100  // Add this line
             }}
             scrollToFirstError
@@ -848,8 +850,10 @@ joinFeesRemainingAmount: values?.joinFeesPaymentType === 'custom' && values?.cus
                               form.resetFields(['displayName', 'fatherName', 'guardian', 'gender', 'guardianRelation', 
                                 'jati', 'gotra', 'phone', 'phoneAlt', 'aadhaarNo', 'bobDate', 'currentAddress', 
                                 'village', 'state', 'district', 'pinCode']);
+                              setDistricts(districtsByState['rajasthan'] || []);
                               form.setFieldsValue({
-                                dateJoin: dayjs()
+                                dateJoin: dayjs(),
+                                state: 'rajasthan',
                               });
                             }}
                           >
